@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,8 +33,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -48,9 +53,11 @@ private val CardBgFocused = Color(0xFF4B5563)
 private val Muted = Color(0xFF9CA3AF)
 private val FocusBorder = Color(0xFF60A5FA)
 
+/** true on Android TV (D-pad/remote), false on phones/tablets (touch). Set in MainActivity. */
+val LocalIsTv = compositionLocalOf { true }
+
 private val LIST_PAD = 8.dp
 private val ROW_PAD = 10.dp
-private val NAME_W = 120.dp
 private val GAP = 8.dp
 private val LABEL_W = 24.dp
 private val BAR_H = 26.dp
@@ -62,10 +69,16 @@ fun TimelineScreen(vm: TimelineViewModel) {
     val clock by vm.clock.collectAsStateWithLifecycle()
     var focusedId by remember { mutableStateOf<String?>(null) }
 
-    Column(Modifier.fillMaxSize().background(ScreenBg).padding(horizontal = 24.dp, vertical = 16.dp)) {
+    val isTv = LocalIsTv.current
+    val compact = LocalConfiguration.current.screenWidthDp < 720   // narrow phone screens
+    val nameW = if (compact) 90.dp else 120.dp
+    val padH = if (isTv) 24.dp else 12.dp   // TV needs overscan-safe margins
+    val padV = if (isTv) 16.dp else 8.dp
+
+    Column(Modifier.fillMaxSize().background(ScreenBg).padding(horizontal = padH, vertical = padV)) {
         Header(state, clock, vm)
         Spacer(Modifier.height(8.dp))
-        TimeAxis(state.axisTicks)
+        TimeAxis(state.axisTicks, nameW)
 
         if (state.rows.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -79,15 +92,15 @@ fun TimelineScreen(vm: TimelineViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(state.rows, key = { it.machineId }) { row ->
-                    MachineRow(row, onFocused = { focusedId = row.machineId })
+                    MachineRow(row, nameW, isTv, onFocused = { focusedId = row.machineId })
                 }
             }
         }
-        DetailPanel(state.rows.firstOrNull { it.machineId == focusedId })
+        DetailPanel(state.rows.firstOrNull { it.machineId == focusedId }, isTv)
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun Header(state: TimelineScreenState, clock: String, vm: TimelineViewModel) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -98,16 +111,20 @@ private fun Header(state: TimelineScreenState, clock: String, vm: TimelineViewMo
         if (state.loading) Text("Loading...", color = Color(0xFFFBBF24), fontSize = 16.sp)
     }
     Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Button(onClick = vm::cycleTeam) { Text("Tổ: ${state.teamLabel}", fontSize = 16.sp) }
         Button(onClick = vm::cycleMachine) { Text("M: ${state.machineLabel}", fontSize = 16.sp) }
         Button(onClick = vm::cycleMode) { Text("Mode ${state.modeLabel}", fontSize = 16.sp) }
-        Button(onClick = { vm.changeTextScale(-0.1f) }) { Text("A−", fontSize = 16.sp) }
-        Text("${(state.textScale * 100).toInt()}%", color = Muted, fontSize = 16.sp)
-        Button(onClick = { vm.changeTextScale(+0.1f) }) { Text("A+", fontSize = 16.sp) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { vm.changeTextScale(-0.1f) }) { Text("A−", fontSize = 16.sp) }
+            Text("${(state.textScale * 100).toInt()}%", color = Muted, fontSize = 16.sp)
+            Button(onClick = { vm.changeTextScale(+0.1f) }) { Text("A+", fontSize = 16.sp) }
+        }
         Button(onClick = vm::refreshNow) { Text("Load", fontSize = 16.sp) }
-        Spacer(Modifier.width(8.dp))
-        Text(state.info, color = Muted, fontSize = 14.sp)
+        Text(state.info, color = Muted, fontSize = 14.sp, modifier = Modifier.padding(top = 10.dp))
     }
     state.error?.let { Text(it, color = Color(0xFFF87171), fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp)) }
     Spacer(Modifier.height(8.dp))
@@ -124,10 +141,10 @@ private fun Header(state: TimelineScreenState, clock: String, vm: TimelineViewMo
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun TimeAxis(ticks: List<AxisTick>) {
+private fun TimeAxis(ticks: List<AxisTick>, nameW: Dp) {
     BoxWithConstraints(
         Modifier.fillMaxWidth()
-            .padding(start = LIST_PAD + ROW_PAD + NAME_W + GAP + LABEL_W, end = LIST_PAD + ROW_PAD)
+            .padding(start = LIST_PAD + ROW_PAD + nameW + GAP + LABEL_W, end = LIST_PAD + ROW_PAD)
             .height(24.dp)
     ) {
         val w = maxWidth
@@ -144,13 +161,13 @@ private fun TimeAxis(ticks: List<AxisTick>) {
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun MachineRow(row: MachineTimelineUIState, onFocused: () -> Unit) {
+private fun MachineRow(row: MachineTimelineUIState, nameW: Dp, isTv: Boolean, onFocused: () -> Unit) {
     val plan = remember(row.planSegments) { UIProgressSegmentList(row.planSegments) }
     val work = remember(row.workSegments) { UIProgressSegmentList(row.workSegments) }
     val status = remember(row.statusSegments) { UIProgressSegmentList(row.statusSegments) }
 
     Surface(
-        onClick = { /* có thể mở màn hình chi tiết máy */ },
+        onClick = onFocused, // chạm = chọn máy (tương đương focus bằng D-pad)
         modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.hasFocus) onFocused() },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(
@@ -161,11 +178,11 @@ private fun MachineRow(row: MachineTimelineUIState, onFocused: () -> Unit) {
         border = ClickableSurfaceDefaults.border(
             focusedBorder = Border(BorderStroke(3.dp, FocusBorder), shape = RoundedCornerShape(8.dp))
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.015f)
+        scale = ClickableSurfaceDefaults.scale(focusedScale = if (isTv) 1.015f else 1f)
     ) {
         Row(Modifier.padding(ROW_PAD), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.width(NAME_W).height(BAR_H * 3 + 8.dp)
+                Modifier.width(nameW).height(BAR_H * 3 + 8.dp)
                     .background(Color(0xFF4B5563), RoundedCornerShape(6.dp)),
                 contentAlignment = Alignment.Center
             ) {
@@ -193,10 +210,10 @@ private fun BarLine(label: String, segs: UIProgressSegmentList, nowPct: Float?) 
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun DetailPanel(row: MachineTimelineUIState?) {
+private fun DetailPanel(row: MachineTimelineUIState?, isTv: Boolean) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp).background(CardBg, RoundedCornerShape(8.dp)).padding(12.dp)) {
         if (row == null) {
-            Text("Dùng D-pad để chọn máy xem chi tiết", color = Muted, fontSize = 16.sp)
+            Text(if (isTv) "Dùng D-pad để chọn máy xem chi tiết" else "Chạm vào một máy để xem chi tiết", color = Muted, fontSize = 16.sp)
         } else {
             Text("${row.machineId}  •  Trạng thái: ${row.currentStatus ?: "—"}",
                 color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)

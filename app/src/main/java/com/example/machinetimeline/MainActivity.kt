@@ -1,5 +1,7 @@
 package com.example.machinetimeline
 
+import android.app.UiModeManager
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,13 +19,16 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalTvMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val isTv = (getSystemService(UI_MODE_SERVICE) as UiModeManager)
+            .currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
         setContent {
             val vm: TimelineViewModel = viewModel()
             val state by vm.uiState.collectAsStateWithLifecycle()
             val base = LocalDensity.current
             // Scale toàn bộ chữ (sp) mà không đổi kích thước dp / pixel của Canvas
             CompositionLocalProvider(
-                LocalDensity provides Density(base.density, base.fontScale * state.textScale)
+                LocalDensity provides Density(base.density, base.fontScale * state.textScale),
+                LocalIsTv provides isTv
             ) {
                 MaterialTheme(colorScheme = darkColorScheme()) {
                     TimelineScreen(vm)
